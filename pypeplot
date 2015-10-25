@@ -11,8 +11,14 @@ import Queue as Q
 from collections import deque
 from multiprocessing import Queue
 
+
 def print_error(err):
     sys.stderr.write("pypeplot error: " + err + "\n")
+
+
+def print_info(msg):
+    sys.stdout.write(msg + "\n")
+
 
 def getdata(q):
     nums = q.get()
@@ -31,11 +37,12 @@ def getdata(q):
         except Q.Empty:
             return data
 
+
 def plotloop(q, args):
     try:
         import matplotlib.pyplot as plt
     except:
-        print_error ("matplotlib not found\n\
+        print_error("matplotlib not found\n\
         matplotlib is available from apt-get, yum, brew or pip.\n\
         see http://matplotlib.org/faq/installing_faq.html\n")
         sys.exit(1)
@@ -47,7 +54,7 @@ def plotloop(q, args):
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    ax.set_yscale('linear') # log, symlog
+    ax.set_yscale('linear')  # log, symlog
     ax.grid(True)
 
     lines = []
@@ -86,6 +93,10 @@ def plotloop(q, args):
 
         ax.relim()
         ax.autoscale()
+        if args.ymax:
+            ax.set_ylim(top=args.ymax)
+        if args.ymin:
+            ax.set_ylim(bottom=args.ymin)
         plt.draw()
         fig.canvas.flush_events()
 
@@ -93,6 +104,7 @@ def plotloop(q, args):
 
     plt.ioff()
     plt.show()
+
 
 def oneline():
     buf = ''
@@ -104,6 +116,7 @@ def oneline():
                 return buf
     except:
         return buf
+
 
 def readloop(q, line, args):
     cur_x = 0
@@ -126,9 +139,11 @@ def readloop(q, line, args):
             quitplot(q)
             return
 
+
 def quitplot(q):
     q.put(None)
     q.put(None)
+
 
 def cleanup(q, pid=None):
     def cleanup_closure(signal, frame):
@@ -137,50 +152,87 @@ def cleanup(q, pid=None):
             os.kill(pid)
     return cleanup_closure
 
-if __name__ == '__main__':
+
+def create_parser():
     parser = argparse.ArgumentParser(
         description="python pipe plotter",
         epilog="example: seq 100 | awk '{print sin($1/10)}' | pypeplot")
-    parser.add_argument('--tee','-t', action='store_const',
-        help='copy standard input to standard output',
-        default=False, const=True, dest='tee')
-    parser.add_argument('--samples', '-S',action='store', type=int,
-        default=50, help='number of smaples for sliding window (default: 50)')
+    parser.add_argument('--tee', '-t', action='store_const',
+                        help='copy standard input to standard output',
+                        default=False, const=True, dest='tee')
     parser.add_argument('--delimiter', '-D', action='store', type=str,
-        default=' ', help='string used as column delimiter (default: " ")')
+                        default=' ',
+                        help='string used as column delimiter (default: " ")')
+    parser.add_argument('--samples', '-S', action='store', type=int,
+                        default=50,
+                        help='number of sliding window samples (default: 50)')
     parser.add_argument('--columns', '-c', nargs='+', action='store',
-        type=int, default=None, help='list of columns to plot (default: all)')
+                        type=int, default=None,
+                        help='list of column indices to plot (default: all)')
     parser.add_argument('--xcolumn', action='store', type=int,
-        default=None, help='column to use as x-axis')
+                        default=None, help='index of column to use as x-axis')
     parser.add_argument('--idcolumn', action='store', type=int,
-        default=None, help='column to use as identifier')
+                        default=None, help='column to use as identifier')
     parser.add_argument('--title', action='store', type=str,
-        default=None, help='plot title (default: None)')
+                        default=None, help='plot title (default: None)')
     parser.add_argument('--xlabel', action='store', type=str,
-        default=None, help='x-axis label (default: None)')
+                        default=None, help='x-axis label (default: None)')
     parser.add_argument('--ylabel', action='store', type=str,
-        default=None, help='y-axis label (default: None)')
-    parser.add_argument('--ymin', action='store', type=float,
-        default=None, help='minimum limit y-axis range (default: auto)')
-    parser.add_argument('--ymax', action='store', type=float,
-        default=None, help='maximum limit y-axis range (default: auto)')
+                        default=None, help='y-axis label (default: None)')
     parser.add_argument('--legend', '-l', nargs='+', action='store',
-        type=str, default=None, help='label used in legend for each plot (default: None)')
-    parser.add_argument('--style', '-s', nargs='+', action='store',
-        type=str, default=None, help='style for each plot (default: auto)')
-    # TODO: implement ymin/ymax
+                        type=str, default=None,
+                        help='legend for each plot (default: None)')
+    parser.add_argument('--style', '-s', nargs='+', action='store', type=str,
+                        default=None,
+                        help='style for each plot (default: auto)')
+    parser.add_argument('--ymin', action='store', type=float, default=None,
+                        help='minimum limit y-axis range (default: auto)')
+    parser.add_argument('--ymax', action='store', type=float, default=None,
+                        help='maximum limit y-axis range (default: auto)')
 
-    args = parser.parse_args()
+    return parser
+
+
+def check_args(args, num_cols):
+    if args.xcolumn is not None and args.xcolumn >= num_cols:
+        print_error("can't find xcolumn %d, only %d columns available"
+                    % (args.xcolumn, num_cols))
+        return False
+
+    if args.idcolumn is not None and args.idcolumn >= num_cols:
+        print_error("can't find idcolumn %d, only %d columns available"
+                    % (args.idcolumn, num_cols))
+        return False
+
+    if args.legend and len(args.legend) != len(args.columns):
+        print_error("received %d plot labels and expected %d"
+                    % (len(args.legend), len(args.columns)))
+        return False
+
+    if args.style and len(args.style) != len(args.columns):
+        print_error("received %d plot styles and expected %d"
+                    % (len(args.style), len(args.columns)))
+        return False
+
+    return True
+
+
+def main(cmd_args=None):
+    parser = create_parser()
+    args = parser.parse_args(cmd_args)
 
     if sys.stdin.isatty():
         print_error("expected pipe as stdin\n")
         parser.print_help()
-        sys.exit(1)
+        return 1
     else:
         line = oneline()
         if line == '':
             print_error("received empty line")
-            sys.exit(1)
+            return 1
+
+    if args.samples <= 0:
+        args.samples = None
 
     num_cols = len(line.strip().split(args.delimiter))
     if not args.columns:
@@ -189,29 +241,13 @@ if __name__ == '__main__':
         else:
             args.columns = range(num_cols)
 
-    if args.samples <= 0:
-        args.samples = None
-
-    if args.xcolumn is not None and args.xcolumn >= num_cols:
-        print_error("can't find xcolumn %d, only %d columns available" % (args.xcolumn, num_cols))
-        sys.exit(1)
-
-    if args.idcolumn is not None and args.idcolumn >= num_cols:
-        print_error("can't find idcolumn %d, only %d columns available" % (args.idcolumn, num_cols))
-        sys.exit(1)
-
-    if args.legend and len(args.legend) != len(args.columns):
-        print_error("received %d plot labels and expected %d" % (len(args.legend), len(args.columns)))
-        sys.exit(1)
-
-    if args.style and len(args.style) != len(args.columns):
-        print_error("received %d plot styles and expected %d" % (len(args.style), len(args.columns)))
-        sys.exit(1)
+    if not check_args(args, num_cols):
+        return 1
 
     # Using os.fork instead of multiprocess.Process to allow plot to
     # continue to remain on background after parent process has exited.
     # This is possible with fork or using additional package
-    # dependencies, which we wanted to keep to a minimum.
+    # dependencies, which I wanted to avoid at all costs.
     q = Queue()
     child_pid = os.fork()
     if child_pid == 0:
@@ -221,6 +257,11 @@ if __name__ == '__main__':
         signal.signal(signal.SIGINT, cleanup(q, child_pid))
         readloop(q, line, args)
         if not args.tee:
-            print "data sent, close plot window (PID=%d) to exit."%child_pid
+            print_info("data sent, close plot window (PID=%d) to exit."
+                       % child_pid)
 
-    sys.exit(0)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
